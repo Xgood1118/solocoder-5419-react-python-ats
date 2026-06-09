@@ -23,23 +23,101 @@ SKILL_KEYWORDS = [
     "UI设计", "UX设计", "Figma", "Sketch", "Photoshop", "Illustrator",
 ]
 
+SECTION_KEYWORDS = [
+    "教育背景", "教育经历", "教育", "学历", "求学经历",
+    "工作经历", "工作经验", "职业经历", "工作背景", "工作履历",
+    "项目经历", "项目经验", "项目",
+    "技能", "专业技能", "技术栈", "技术能力", "掌握技能", "技能特长",
+    "自我评价", "自我简介", "个人简介", "自我介绍", "个人评价",
+    "实习经历", "校园经历", "校园活动", "获奖经历", "证书",
+    "兴趣爱好", "语言能力", "其他",
+]
+
+NAME_FORBIDDEN_WORDS = [
+    "教育", "工作", "项目", "技能", "自我", "个人", "实习",
+    "校园", "获奖", "证书", "兴趣", "语言", "其他", "求职",
+    "基本", "联系", "信息", "背景", "经历", "经验", "简介",
+    "介绍", "评价", "能力", "特长", "爱好", "公司", "大学",
+    "学院", "专业", "职责", "负责", "技术", "部门", "职位",
+]
+
 
 class FieldExtractor:
     def __init__(self, text: str):
         self.text = text
         self.lines = [line.strip() for line in text.split("\n") if line.strip()]
+        self.sections = self._split_sections()
+
+    def _is_section_header(self, line: str) -> bool:
+        if len(line) > 20:
+            return False
+        for kw in SECTION_KEYWORDS:
+            if line == kw or (kw in line and len(line) - len(kw) < 4):
+                return True
+        return False
+
+    def _split_sections(self) -> dict:
+        sections = {"header": [], "education": [], "work": [], "project": [],
+                    "skill": [], "self_eval": [], "other": []}
+        current_section = "header"
+
+        for line in self.lines:
+            if self._is_section_header(line):
+                line_lower = line
+                if any(kw in line for kw in ["教育背景", "教育经历", "教育", "学历", "求学经历"]):
+                    current_section = "education"
+                elif any(kw in line for kw in ["工作经历", "工作经验", "职业经历", "工作背景", "工作履历"]):
+                    current_section = "work"
+                elif any(kw in line for kw in ["项目经历", "项目经验"]) and "工作" not in line:
+                    current_section = "project"
+                elif any(kw in line for kw in ["技能", "专业技能", "技术栈", "技术能力", "掌握技能", "技能特长"]):
+                    current_section = "skill"
+                elif any(kw in line for kw in ["自我评价", "自我简介", "个人简介", "自我介绍", "个人评价"]):
+                    current_section = "self_eval"
+                else:
+                    current_section = "other"
+                continue
+
+            if current_section in sections:
+                sections[current_section].append(line)
+            else:
+                sections["other"].append(line)
+
+        return sections
 
     def extract_name(self) -> str:
-        common_names = ["张三", "李四", "王五", "赵六", "钱七", "孙八", "周九", "吴十"]
-        for line in self.lines[:10]:
-            if len(line) <= 4 and re.match(r"^[\u4e00-\u9fa5]{2,4}$", line):
-                if line not in ["姓名", "电话", "邮箱", "学历", "工作", "项目", "技能", "自我"]:
-                    return line
-        for line in self.lines[:5]:
+        header_lines = self.sections["header"]
+
+        for line in header_lines[:8]:
             if "姓名" in line:
-                match = re.search(r"姓名[:：\s]*([\u4e00-\u9fa5]{2,4})", line)
+                match = re.search(r"姓名[:：\s]*([\u4e00-\u9fa5]{2,4}|[a-zA-Z\s]{2,30})", line)
                 if match:
-                    return match.group(1)
+                    name = match.group(1).strip()
+                    if name and len(name) >= 2:
+                        return name
+
+        for line in header_lines[:8]:
+            if len(line) <= 4 and re.match(r"^[\u4e00-\u9fa5]{2,4}$", line):
+                is_valid_name = True
+                for fw in NAME_FORBIDDEN_WORDS:
+                    if fw in line:
+                        is_valid_name = False
+                        break
+                if is_valid_name and not self._is_section_header(line):
+                    return line
+
+        for line in header_lines[:12]:
+            match = re.search(r"^([\u4e00-\u9fa5]{2,4})\s*[|｜/／]", line)
+            if match:
+                name = match.group(1).strip()
+                is_valid_name = True
+                for fw in NAME_FORBIDDEN_WORDS:
+                    if fw in name:
+                        is_valid_name = False
+                        break
+                if is_valid_name:
+                    return name
+
         return ""
 
     def extract_phone(self) -> str:
@@ -58,67 +136,78 @@ class FieldExtractor:
 
     def extract_education(self) -> List[Education]:
         educations = []
-        edu_keywords = ["教育背景", "教育经历", "教育", "学历", "求学经历"]
-        degree_keywords = ["博士", "硕士", "本科", "专科", "高中", "大专", "学士", "MBA"]
+        lines = self.sections["education"]
+        degree_keywords = ["博士", "硕士", "本科", "专科", "高中", "大专", "学士", "MBA", "研究生"]
 
-        edu_start = -1
-        for i, line in enumerate(self.lines):
-            for kw in edu_keywords:
-                if kw in line and len(line) < 20:
-                    edu_start = i + 1
-                    break
-            if edu_start > 0:
-                break
+        if not lines:
+            return educations
 
-        if edu_start > 0:
-            current_edu = Education()
-            i = edu_start
-            while i < len(self.lines):
-                line = self.lines[i]
-                if any(kw in line for kw in ["工作经历", "项目经历", "技能", "自我评价", "实习经历", "校园经历"]):
-                    if current_edu.school or current_edu.degree:
-                        educations.append(current_edu)
-                    break
+        current_edu = None
+        date_pattern = r"(\d{4})[.\-/年](\d{1,2})[.\-/月]?\s*[-至~到]\s*(\d{4}|至今)?[.\-/年]?(\d{1,2})?[.\-/月]?"
 
-                date_match = re.search(r"(\d{4})[.\-/年](\d{1,2})[.\-/月]?\s*[-至~到]\s*(\d{4})?[.\-/年]?(\d{1,2})?[.\-/月]?", line)
-                if date_match:
-                    if current_edu.school or current_edu.degree:
-                        educations.append(current_edu)
-                    current_edu = Education()
-                    start_y, start_m = date_match.group(1), date_match.group(2)
-                    current_edu.start_date = f"{start_y}-{start_m.zfill(2)}"
-                    if date_match.group(3):
-                        end_y = date_match.group(3)
-                        end_m = date_match.group(4) or "06"
-                        current_edu.end_date = f"{end_y}-{end_m.zfill(2)}"
-                    else:
+        for line in lines:
+            date_match = re.search(date_pattern, line)
+            if date_match:
+                if current_edu and (current_edu.school or current_edu.degree):
+                    educations.append(current_edu)
+                current_edu = Education()
+
+                start_y = date_match.group(1)
+                start_m = date_match.group(2)
+                current_edu.start_date = f"{start_y}-{start_m.zfill(2) if start_m else '01'}"
+
+                end_val = date_match.group(3)
+                if end_val:
+                    if end_val == "至今":
                         current_edu.end_date = "至今"
+                    else:
+                        end_m = date_match.group(4) or "06"
+                        current_edu.end_date = f"{end_val}-{end_m.zfill(2)}"
+
+                school_match = re.search(r"([\u4e00-\u9fa5a-zA-Z0-9]+(大学|学院|学校|研究院|研究所))", line)
+                if school_match:
+                    current_edu.school = school_match.group(1)
 
                 for deg in degree_keywords:
-                    if deg in line and deg not in current_edu.degree:
+                    if deg in line:
                         current_edu.degree = deg
                         break
 
-                if "大学" in line or "学院" in line or "学校" in line or "研究院" in line:
-                    school_match = re.search(r"([\u4e00-\u9fa5]+(大学|学院|学校|研究院))", line)
+                major_match = re.search(r"([\u4e00-\u9fa5a-zA-Z]+专业)", line)
+                if major_match:
+                    current_edu.major = major_match.group(1)
+                else:
+                    parts = re.split(r"[\s·]+", line)
+                    for part in parts:
+                        if "专业" in part and len(part) <= 20:
+                            current_edu.major = part.strip()
+                            break
+
+            elif current_edu is not None:
+                if not current_edu.school:
+                    school_match = re.search(r"([\u4e00-\u9fa5a-zA-Z0-9]+(大学|学院|学校|研究院|研究所))", line)
                     if school_match:
                         current_edu.school = school_match.group(1)
 
-                if "专业" in line:
-                    major_match = re.search(r"([\u4e00-\u9fa5a-zA-Z\s]+专业)", line)
+                if not current_edu.degree:
+                    for deg in degree_keywords:
+                        if deg in line:
+                            current_edu.degree = deg
+                            break
+
+                if not current_edu.major and "专业" in line:
+                    major_match = re.search(r"([\u4e00-\u9fa5a-zA-Z]+专业)", line)
                     if major_match:
-                        current_edu.major = major_match.group(1).strip()
+                        current_edu.major = major_match.group(1)
 
-                i += 1
-
-            if current_edu.school or current_edu.degree:
-                educations.append(current_edu)
+        if current_edu and (current_edu.school or current_edu.degree):
+            educations.append(current_edu)
 
         if not educations:
             for deg in degree_keywords:
                 if deg in self.text:
                     edu = Education(degree=deg)
-                    school_match = re.search(r"([\u4e00-\u9fa5]+(大学|学院))", self.text)
+                    school_match = re.search(r"([\u4e00-\u9fa5a-zA-Z0-9]+(大学|学院))", self.text)
                     if school_match:
                         edu.school = school_match.group(1)
                     educations.append(edu)
@@ -128,74 +217,64 @@ class FieldExtractor:
 
     def extract_work_experience(self) -> List[WorkExperience]:
         experiences = []
-        section_starts = []
-        for i, line in enumerate(self.lines):
-            if any(kw in line for kw in ["工作经历", "工作经验", "职业经历", "工作背景"]) and len(line) < 20:
-                section_starts.append(i + 1)
-                break
+        lines = self.sections["work"]
 
-        if not section_starts:
+        if not lines:
             return experiences
 
-        start_idx = section_starts[0]
         current_exp = None
-        i = start_idx
+        date_pattern = r"(\d{4})[.\-/年](\d{1,2})[.\-/月]?\s*[-至~到]\s*(\d{4}|至今)?[.\-/年]?(\d{1,2})?[.\-/月]?"
 
-        while i < len(self.lines):
-            line = self.lines[i]
-            if any(kw in line for kw in ["项目经历", "技能", "自我评价", "教育背景", "校园经历", "实习经历"]):
-                if current_exp:
+        for line in lines:
+            date_match = re.search(date_pattern, line)
+            if date_match:
+                if current_exp and (current_exp.company or current_exp.position):
                     experiences.append(current_exp)
-                break
+                current_exp = WorkExperience()
 
-            date_patterns = [
-                r"(\d{4})[.\-/年](\d{1,2})[.\-/月]?\s*[-至~到]\s*(\d{4})?[.\-/年]?(\d{1,2})?[.\-/月]?",
-                r"(\d{4})\s*[-至~到]\s*(\d{4}|至今)",
-            ]
+                start_y = date_match.group(1)
+                start_m = date_match.group(2)
+                current_exp.start_date = f"{start_y}-{start_m.zfill(2) if start_m else '01'}"
 
-            has_date = False
-            for pattern in date_patterns:
-                date_match = re.search(pattern, line)
-                if date_match:
-                    has_date = True
-                    if current_exp and (current_exp.company or current_exp.position):
-                        experiences.append(current_exp)
-                    current_exp = WorkExperience()
+                end_val = date_match.group(3)
+                if end_val == "至今":
+                    current_exp.end_date = "至今"
+                elif end_val:
+                    end_m = date_match.group(4) or "01"
+                    current_exp.end_date = f"{end_val}-{end_m.zfill(2)}"
+                else:
+                    current_exp.end_date = "至今"
 
-                    start_y, start_m = date_match.group(1), date_match.group(2) if date_match.lastindex >= 2 else None
-                    current_exp.start_date = f"{start_y}-{start_m.zfill(2) if start_m else '01'}"
-
-                    if date_match.lastindex >= 3 and date_match.group(3):
-                        end_y = date_match.group(3)
-                        if end_y == "至今":
-                            current_exp.end_date = "至今"
-                        else:
-                            end_m = date_match.group(4) if date_match.lastindex >= 4 and date_match.group(4) else "01"
-                            current_exp.end_date = f"{end_y}-{end_m.zfill(2)}"
-                    else:
-                        current_exp.end_date = "至今"
-                    break
-
-            if has_date:
-                company_match = re.search(r"([\u4e00-\u9fa5a-zA-Z0-9\s]+公司|[\u4e00-\u9fa5a-zA-Z0-9\s]+科技|[\u4e00-\u9fa5a-zA-Z0-9\s]+集团)", line)
+                company_match = re.search(
+                    r"([\u4e00-\u9fa5a-zA-Z0-9\s]+(公司|科技|集团|企业|有限公司|股份|研究院))",
+                    line
+                )
                 if not company_match:
                     company_match = re.search(r"^([\u4e00-\u9fa5a-zA-Z0-9\s]{2,20})", line)
-                if company_match and current_exp:
+                if company_match:
                     current_exp.company = company_match.group(1).strip()
 
-                pos_match = re.search(r"([\u4e00-\u9fa5a-zA-Z\s]+工程师|[\u4e00-\u9fa5a-zA-Z\s]+经理|[\u4e00-\u9fa5a-zA-Z\s]+主管|[\u4e00-\u9fa5a-zA-Z\s]+总监|[\u4e00-\u9fa5a-zA-Z\s]+专家)", line)
-                if not pos_match:
-                    pos_match = re.search(r"[，,/、\s]([\u4e00-\u9fa5a-zA-Z\s]{2,15})$", line)
-                if pos_match and current_exp:
-                    current_exp.position = pos_match.group(1).strip()
+                pos_patterns = [
+                    r"([\u4e00-\u9fa5a-zA-Z]+工程师)",
+                    r"([\u4e00-\u9fa5a-zA-Z]+经理)",
+                    r"([\u4e00-\u9fa5a-zA-Z]+主管)",
+                    r"([\u4e00-\u9fa5a-zA-Z]+总监)",
+                    r"([\u4e00-\u9fa5a-zA-Z]+专家)",
+                    r"([\u4e00-\u9fa5a-zA-Z]+设计师)",
+                    r"([\u4e00-\u9fa5a-zA-Z]+分析师)",
+                    r"[\s·/／|｜]([\u4e00-\u9fa5a-zA-Z]{2,15})$",
+                ]
+                for pat in pos_patterns:
+                    pos_match = re.search(pat, line)
+                    if pos_match and pos_match.group(1) != current_exp.company:
+                        current_exp.position = pos_match.group(1).strip()
+                        break
 
-            elif current_exp:
+            elif current_exp is not None:
                 if current_exp.description:
                     current_exp.description += "\n" + line
                 else:
                     current_exp.description = line
-
-            i += 1
 
         if current_exp and (current_exp.company or current_exp.position):
             experiences.append(current_exp)
@@ -204,58 +283,63 @@ class FieldExtractor:
 
     def extract_project_experience(self) -> List[ProjectExperience]:
         projects = []
-        section_start = -1
-        for i, line in enumerate(self.lines):
-            if any(kw in line for kw in ["项目经历", "项目经验", "项目"]) and len(line) < 20:
-                section_start = i + 1
-                break
+        lines = self.sections["project"]
 
-        if section_start < 0:
+        if not lines:
             return projects
 
         current_proj = None
-        i = section_start
+        date_pattern = r"(\d{4})[.\-/年](\d{1,2})[.\-/月]?\s*[-至~到]\s*(\d{4}|至今)?[.\-/年]?(\d{1,2})?[.\-/月]?"
 
-        while i < len(self.lines):
-            line = self.lines[i]
-            if any(kw in line for kw in ["工作经历", "技能", "自我评价", "教育背景", "实习经历", "校园经历"]):
-                if current_proj:
-                    projects.append(current_proj)
-                break
-
-            date_match = re.search(r"(\d{4})[.\-/年](\d{1,2})[.\-/月]?\s*[-至~到]\s*(\d{4})?[.\-/年]?(\d{1,2})?[.\-/月]?", line)
-
-            if date_match and ("项目" in line or "系统" in line or "平台" in line or i == section_start):
+        for line in lines:
+            date_match = re.search(date_pattern, line)
+            if date_match:
                 if current_proj and current_proj.name:
                     projects.append(current_proj)
                 current_proj = ProjectExperience()
 
-                name_match = re.search(r"^([\u4e00-\u9fa5a-zA-Z0-9\s]{2,30})", line)
+                name_part = line
+                for sep in ["-", "—", "至", "到", "20"]:
+                    idx = line.find(sep)
+                    if idx > 0:
+                        name_part = line[:idx].strip()
+                        break
+
+                name_match = re.search(r"^([\u4e00-\u9fa5a-zA-Z0-9\s]{2,30})", name_part)
                 if name_match:
                     current_proj.name = name_match.group(1).strip()
+                else:
+                    current_proj.name = "未命名项目"
 
-                start_y, start_m = date_match.group(1), date_match.group(2)
-                current_proj.start_date = f"{start_y}-{start_m.zfill(2)}"
-                if date_match.group(3):
-                    end_y = date_match.group(3)
+                start_y = date_match.group(1)
+                start_m = date_match.group(2)
+                current_proj.start_date = f"{start_y}-{start_m.zfill(2) if start_m else '01'}"
+
+                end_val = date_match.group(3)
+                if end_val == "至今":
+                    current_proj.end_date = "至今"
+                elif end_val:
                     end_m = date_match.group(4) or "01"
-                    current_proj.end_date = f"{end_y}-{end_m.zfill(2)}"
+                    current_proj.end_date = f"{end_val}-{end_m.zfill(2)}"
 
-            elif current_proj:
+            elif current_proj is not None:
                 if "技术栈" in line or "技术" in line:
-                    tech_match = re.search(r"[：:](.*)", line)
+                    tech_match = re.search(r"[:：]\s*(.*)", line)
                     if tech_match:
                         current_proj.tech_stack = tech_match.group(1).strip()
-                elif "职责" in line or "负责" in line:
-                    resp_match = re.search(r"[：:](.*)", line)
+                elif "职责" in line or "负责" in line or "描述" in line:
+                    resp_match = re.search(r"[:：]\s*(.*)", line)
                     if resp_match:
                         current_proj.responsibilities = resp_match.group(1).strip()
+                    else:
+                        if current_proj.responsibilities:
+                            current_proj.responsibilities += "\n" + line
+                        else:
+                            current_proj.responsibilities = line
                 elif current_proj.responsibilities:
                     current_proj.responsibilities += "\n" + line
                 elif not current_proj.name:
                     current_proj.name = line
-
-            i += 1
 
         if current_proj and current_proj.name:
             projects.append(current_proj)
@@ -267,40 +351,29 @@ class FieldExtractor:
         text_lower = self.text.lower()
 
         for skill in SKILL_KEYWORDS:
-            if skill.lower() in text_lower:
+            if skill.lower() in text_lower and skill not in found_skills:
                 found_skills.append(skill)
 
-        skill_section = False
-        for line in self.lines:
-            if any(kw in line for kw in ["技能", "技术栈", "专业技能", "技术能力", "掌握技能"]):
-                skill_section = True
-                continue
-            if skill_section:
-                if any(kw in line for kw in ["工作经历", "项目经历", "教育背景", "自我评价"]):
-                    break
-                parts = re.split(r"[，,、/；;|\s]+", line)
-                for part in parts:
-                    part = part.strip()
-                    if 1 < len(part) < 20 and part not in found_skills:
-                        found_skills.append(part)
+        skill_lines = self.sections["skill"]
+        for line in skill_lines:
+            if ":" in line or "：" in line:
+                parts = re.split(r"[:：]", line, maxsplit=1)
+                content = parts[1] if len(parts) > 1 else line
+            else:
+                content = line
+
+            parts = re.split(r"[，,、/／；;|｜\s]+", content)
+            for part in parts:
+                part = part.strip()
+                if 1 < len(part) < 20 and part not in found_skills and not self._is_section_header(part):
+                    found_skills.append(part)
 
         return found_skills[:30]
 
     def extract_self_evaluation(self) -> str:
-        eval_start = -1
-        eval_end = -1
-        for i, line in enumerate(self.lines):
-            if any(kw in line for kw in ["自我评价", "自我简介", "个人简介", "自我介绍", "个人评价"]):
-                eval_start = i + 1
-            elif eval_start > 0 and any(kw in line for kw in ["工作经历", "项目经历", "教育背景", "技能"]):
-                eval_end = i
-                break
-
-        if eval_start > 0:
-            end_idx = eval_end if eval_end > 0 else len(self.lines)
-            content = "\n".join(self.lines[eval_start:min(end_idx, eval_start + 20)])
-            return content.strip()
-
+        lines = self.sections["self_eval"]
+        if lines:
+            return "\n".join(lines).strip()
         return ""
 
     def extract_all(self) -> ResumeParsedResult:

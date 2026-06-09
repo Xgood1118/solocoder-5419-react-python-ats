@@ -26,9 +26,10 @@ def create_application(app_create: ApplicationCreate):
     candidate = db.get_candidate(app_create.candidate_id)
     if not candidate:
         raise HTTPException(status_code=404, detail="候选人不存在")
-    resume = db.get_resume(app_create.resume_id)
-    if not resume:
-        raise HTTPException(status_code=404, detail="简历不存在")
+    if app_create.resume_id:
+        resume = db.get_resume(app_create.resume_id)
+        if not resume:
+            raise HTTPException(status_code=404, detail="简历不存在")
 
     return db.create_application(app_create)
 

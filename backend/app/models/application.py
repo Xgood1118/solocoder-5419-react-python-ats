@@ -6,7 +6,7 @@ from .common import ApplicationStatus, ScreeningResult, StatusHistoryItem
 class ApplicationCreate(BaseModel):
     job_id: str
     candidate_id: str
-    resume_id: str
+    resume_id: Optional[str] = None
 
 
 class ApplicationUpdate(BaseModel):
@@ -19,7 +19,7 @@ class Application(BaseModel):
     id: str
     job_id: str
     candidate_id: str
-    resume_id: str
+    resume_id: Optional[str] = None
     status: ApplicationStatus
     status_history: List[StatusHistoryItem] = []
     screening_result: Optional[ScreeningResult] = None
